@@ -2,6 +2,7 @@
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
 """
 
+import asyncio
 import platform
 from collections.abc import Callable
 from datetime import datetime
@@ -31,14 +32,6 @@ from anthropic.types.beta import (
 )
 
 from .tools import BashTool, ComputerTool, EditTool, ToolCollection, ToolResult
-
-MODEL_LIST = [
-    "claude-3-5-sonnet-20241022",
-    #"claude-3-5-haiku-20241022", claude 3.5 haiku does not actually support vision
-    "claude-3-opus-20240229",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307"
-]
 
 COMPUTER_USE_BETA_FLAG = "computer-use-2024-10-22"
 PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
@@ -137,42 +130,26 @@ async def sampling_loop(
         # we use raw_response to provide debug information to streamlit. Your
         # implementation may be able call the SDK directly with:
         # `response = client.messages.create(...)` instead.
-        for model in MODEL_LIST:
-            try:
-                raw_response = client.beta.messages.with_raw_response.create(
-                    max_tokens=max_tokens,
-                    messages=messages,
-                    model=model,
-                    system=[system],
-                    tools=tool_collection.to_params(),
-                    betas=betas,
-                )
-                break
-            except RateLimitError as e:
+        try:
+            raw_response = client.beta.messages.with_raw_response.create(
+                max_tokens=max_tokens,
+                messages=messages,
+                model=model,
+                system=[system],
+                tools=tool_collection.to_params(),
+                betas=betas,
+            )
+        except (APIStatusError, APIResponseValidationError) as e:
+            if isinstance(e, APIStatusError) and e.status_code == 429:
+                retry_after = int(e.response.headers.get('retry-after',60))
+                print(f"Rate limit hit. Waiting {retry_after} seconds before retrying...")
+                await asyncio.sleep(retry_after)
                 continue
-            except (APIStatusError, APIResponseValidationError) as e:
-                api_response_callback(e.request, e.response, e)
-                return messages
-            except APIError as e:
-                api_response_callback(e.request, e.body, e)
-                return messages
-        else:
-            try:
-                raw_response = client.beta.messages.with_raw_response.create(
-                    max_tokens=max_tokens,
-                    messages=messages,
-                    model=model,
-                    system=[system],
-                    tools=tool_collection.to_params(),
-                    betas=betas,
-                )
-                break
-            except (APIStatusError, APIResponseValidationError) as e:
-                api_response_callback(e.request, e.response, e)
-                return messages
-            except APIError as e:
-                api_response_callback(e.request, e.body, e)
-                return messages
+            api_response_callback(e.request, e.response, e)
+            return messages
+        except APIError as e:
+            api_response_callback(e.request, e.body, e)
+            return messages
 
 
         api_response_callback(
