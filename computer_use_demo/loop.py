@@ -138,6 +138,8 @@ async def sampling_loop(
                 system=[system],
                 tools=tool_collection.to_params(),
                 betas=betas,
+                temperature = 0,
+                top_p = 0
             )
         except (APIStatusError, APIResponseValidationError) as e:
             if isinstance(e, APIStatusError) and e.status_code == 429:
